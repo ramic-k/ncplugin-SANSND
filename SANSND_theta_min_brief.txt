@@ -1,0 +1,221 @@
+Project brief for coding agent — SANSND θ_min feature
+====================================================
+
+Repository
+----------
+  https://github.com/ramic-k/ncplugin-SANSND
+
+Overall objective
+-----------------
+Extend the SANSND plugin so that it supports an *optional* minimum scattering angle, specified in the `.ncmat` file as a parameter called `theta_min_deg` (in degrees).
+
+When `theta_min_deg` is given, it must affect:
+
+  1) The *SANS removal cross section* as a function of neutron energy.
+  2) The *sampling of scattering events* (angle distribution) used in Monte Carlo.
+
+Physically, the idea is that forward-scattered neutrons with scattering angle θ smaller than some instrument acceptance angle θ_min are not considered “removed” from the beam. They should not contribute to the SANS removal cross section and should not appear in the sampled SANS scattering angles.
+
+If `theta_min_deg` is not provided, the plugin must behave exactly as it does now (full angular range, no cutoff). Backward compatibility is critical.
+
+
+Physics to implement (model-agnostic)
+-------------------------------------
+Work in the usual SANSND conventions: wave number k in Å^-1, momentum transfer q in Å^-1, cross sections in barns.
+
+For elastic SANS in an isotropic medium, the removal cross section currently has the general structure:
+
+  sigma_total(E) = (1 / (2 * k^2)) * ∫[q = 0 -> 2k]  q * I(q) dq
+
+where:
+  - E   = neutron energy,
+  - k   = neutron wave number (Å^-1) corresponding to E,
+  - q   = magnitude of momentum transfer (Å^-1),
+  - I(q)= SANS differential intensity (model-dependent).
+
+Without a cutoff, all scattering angles from 0 to π are considered removal.
+
+We want to introduce a minimum acceptance angle θ_min. All scattering with θ < θ_min is considered transmitted (i.e. not part of the SANS removal). For elastic scattering:
+
+  q = 2 * k * sin(θ / 2)
+
+Thus, the minimum q corresponding to θ_min is:
+
+  q_min = 2 * k * sin(θ_min / 2),
+
+where θ_min is in radians.
+
+With this cutoff, the *measured* SANS removal cross section should be:
+
+  sigma_meas(E; θ_min) = (1 / (2 * k^2)) * ∫[q = q_min -> 2k]  q * I(q) dq
+
+This is equivalent to:
+
+  sigma_meas(E; θ_min) = sigma_total(E)
+                         - (1 / (2 * k^2)) * ∫[q = 0 -> q_min] q * I(q) dq
+
+If we define a primitive:
+
+  J(q) = ∫[x = 0 -> q] x * I(x) dx,
+
+then
+
+  sigma_total(E)        = (1 / (2 * k^2)) * J(2k)
+  sigma_meas(E; θ_min)  = (1 / (2 * k^2)) * ( J(2k) - J(q_min) )
+
+Note that:
+  - For θ_min = 0, q_min = 0, so sigma_meas = sigma_total (current behavior).
+  - As θ_min increases, J(q_min) increases, so sigma_meas decreases.
+  - If θ_min is so large that q_min ≥ 2k, then J(2k) - J(q_min) ≈ 0 and the SANS removal is essentially zero.
+
+**Sampling requirement:**
+
+The SANSND sampler draws q values according to a probability density proportional to:
+
+  p_full(q) ∝ q * I(q),  for q in [0, 2k].
+
+Then it converts q to an angle using cosθ = 1 - q^2 / (2 k^2).
+
+With the cutoff, we want to sample from the *truncated* distribution:
+
+  p_trunc(q) ∝ q * I(q),  for q in [q_min, 2k],
+
+i.e., ignoring all weight below q_min.
+
+If the *full* CDF is:
+
+  CDF_full(q) = J(q) / J(2k),
+
+then the fraction of events in the forward cone (0 to q_min) is:
+
+  F0 = CDF_full(q_min) = J(q_min) / J(2k).
+
+To sample from the truncated distribution:
+
+  - Draw u ~ Uniform(0,1).
+  - Map to full CDF space: u_full = F0 + u * (1 - F0).
+  - Invert the full CDF: find q such that CDF_full(q) = u_full.
+  - Convert q -> θ via cosθ = 1 - q^2 / (2*k^2) as in the existing code.
+
+This guarantees q ∈ [q_min, 2k] and θ ≥ θ_min. If q_min is extremely close to 0, this reduces smoothly to the original behavior.
+
+If q_min ≥ 2k (due to a very large θ_min), the truncated cross section is essentially zero and the sampler should not emit any SANS scattering event for that case (or should handle it in whatever way is consistent with the plugin’s conventions).
+
+
+What the agent should analyze in the codebase
+---------------------------------------------
+Before making changes, inspect and understand the full flow in this repo, especially:
+
+1. **Where SANSND options are parsed from NCrystal / .ncmat**
+   - Identify how the custom SANSND section is read from `.ncmat`.
+   - Identify how model parameters (porosity, radii, etc.) are passed into the physics model(s).
+   - Determine the existing syntax used in `.ncmat` for SANSND options so that `theta_min_deg` can fit naturally into that style.
+
+2. **The core “physics model” class(es) for SANSND**
+   - Identify the central abstraction that represents a SANS model (e.g., a base class that holds I(q) and exposes cross section and sampling).
+   - Understand how:
+       * I(q) is evaluated.
+       * Any integrals like J(q) = ∫ q I(q) dq are computed (if they already are).
+       * Cross sections are computed as functions of energy.
+       * Scatter events (angles) are sampled.
+
+3. **NCrystal “IofQHelper” (path will be provided)**
+   - Study the API and capabilities for:
+       * computing I(q),
+       * computing integrals / cumulative distributions,
+       * inverting CDFs or similar.
+   - Decide how best to plug θ_min into the existing workflow using these helper utilities, rather than introducing ad-hoc numerical code in hotspots.
+
+4. **Existing models**
+   - Determine which concrete SANSND models exist and how they connect to the common helpers.
+   - The θ_min logic must be *model-independent*: a single mechanism that works for every SANSND model, not separate ad hoc code per model.
+
+
+High-level requirements for the implementation
+----------------------------------------------
+The following requirements describe what the implementation must achieve, but do not prescribe a specific code structure or exact edits. You, as the coding agent, should choose the best design that fits the existing code.
+
+1. **Optional parameter in .ncmat:**
+   - Introduce a parameter `theta_min_deg` (degrees) in the SANSND section of `.ncmat`.
+   - If unspecified, default to 0.0 degrees (no cutoff).
+   - Internally, store θ_min in radians for computations.
+   - The parameter should be parsed and passed to the physics model in a way consistent with the current architecture.
+
+2. **Cross section with cutoff:**
+   - For each energy E, compute the wave number k in exactly the same way the current code does.
+   - Compute q_min = 2*k*sin(θ_min/2) if θ_min > 0; otherwise, q_min = 0.
+   - The SANS removal cross section should be:
+       sigma(E, theta_min) = (1/(2*k^2)) * (J(2k) - J(q_min))
+     where J(q) = ∫_0^q x I(x) dx.
+   - For θ_min = 0, this must reduce precisely to the existing behavior.
+
+3. **Sampling with cutoff:**
+   - When sampling an elastic SANS event:
+       * Use the truncated distribution on [q_min, 2k] with density ∝ q*I(q).
+       * Implement this by mapping uniform randoms through the full CDF, as described above:
+           F0    = CDF_full(q_min),
+           u     ~ Uniform(0,1),
+           u_full= F0 + u*(1 - F0),
+           q     = CDF_full^{-1}(u_full),
+           cosθ  = 1 - q^2/(2*k^2).
+   - For θ_min = 0, recover the current sampling.
+
+4. **Use existing numerical infrastructure:**
+   - Reuse NCrystal’s IofQHelper (and any plugin helpers built on top of it) for:
+       * I(q),
+       * integrals J(q),
+       * CDF / inverse CDF calculations,
+       * interpolation.
+   - Avoid introducing naive, slow numerical integration or inversion in tight sampling loops.
+   - If additional precomputation is needed (e.g., building CDF tables at model construction time), do it once and reuse it.
+
+5. **Model independence:**
+   - Implement the θ_min logic in a way that works for all SANSND models (e.g., centrally in a base class or shared helper), rather than each model reinventing it.
+   - The design should support current models and any future models that provide I(q).
+
+6. **Backward compatibility:**
+   - When `theta_min_deg` is not present in the `.ncmat` file, the plugin’s behavior must be unchanged within floating-point tolerance for:
+       * Cross sections as functions of energy.
+       * Angular distributions produced by the sampler.
+   - No existing inputs should break.
+
+7. **Units and conventions:**
+   - Keep all existing units and conversions as-is:
+       * k and q in Å^-1.
+       * Integrals J(q) in Å^2.
+       * σ in barns (Å^2 -> barns factor already used in the code must remain consistent).
+   - θ_min is in degrees in the user interface, and internally converted to radians.
+
+8. **Edge cases:**
+   - If θ_min is very small (close to 0), your implementation must smoothly recover current behavior.
+   - If θ_min is very large such that q_min ≥ 2k, then:
+       * the truncated cross section should be 0 (no removal).
+       * the sampler should not attempt to sample from an empty SANS distribution (handle according to whichever pattern is used in the plugin for zero-cross-section channels).
+
+9. **Documentation and examples:**
+   - Update README (or appropriate docs) to explain:
+       * what `theta_min_deg` does,
+       * that it is measured in degrees,
+       * that default is 0.0 (no angular cutoff),
+       * how it influences SANS removal and sampled angles.
+   - Update at least one example `.ncmat` file to include `theta_min_deg=0.25` or similar.
+
+10. **Validation (high level):**
+    - For selected energies, compute:
+        * sigma(theta_min = 0)  and  sigma(theta_min > 0):
+          the latter must be strictly smaller (within numerical tolerance).
+    - Check that increasing θ_min monotonically reduces the SANS removal cross section.
+    - In sampling diagnostics, verify that with θ_min > 0, sampled angles rarely or never fall below θ_min (within the expected numerical tolerance).
+
+
+What is *not* requested
+-----------------------
+- Do not change any unrelated physics models.
+- Do not introduce new analytic formulae for specific SANS models that are not already present in the code.
+- Do not change public units or the general shape of the plugin interface.
+- Do not break existing `.ncmat` files or current usage patterns.
+
+
+Summary
+-------
+In short: carefully analyze the SANSND code and NCrystal’s IofQHelper, then implement a model-agnostic forward-angle cutoff specified as `theta_min_deg` in `.ncmat`. This cutoff should consistently modify both the SANS removal cross section and the sampling of SANS scattering angles by replacing the lower integration limit 0 with q_min = 2*k*sin(theta_min/2), while preserving all existing behavior when `theta_min_deg` is not set.

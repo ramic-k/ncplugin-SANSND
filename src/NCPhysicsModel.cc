@@ -5,10 +5,12 @@
 #include "NCrystal/internal/utils/NCRandUtils.hh"
 #include "NCrystal/internal/utils/NCMath.hh"
 #include "NCrystal/internal/utils/NCMsg.hh"
+#include "NCrystal/internal/utils/NCVector.hh"
 
 #include <algorithm>
 #include <sys/stat.h>
 #include <fstream>
+#include <utility>
 
 //Until upstream provides an NCPLUGIN_MSG macro, we define it here (HOWEVER:
 //Note that it is better for the scattering process to simply emit some json
@@ -61,6 +63,9 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     NCRYSTAL_THROW2(BadInput, "Invalid version specified for the " << pluginNameUpperCase()
                     << " plugin. Only the version " << supp_version << " is supported.");
   }
+  Model model;
+  std::string filename;
+
   if ( data.at(1).at(0) == "FILE" ) {
     NCPLUGIN_MSG("FILE MODE selected");
     if (data.at(2).empty()) {
@@ -68,7 +73,7 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
                       << pluginNameUpperCase() << " plugin ");
     }
 
-    std::string filename = data.at(2).at(0);
+    filename = data.at(2).at(0);
     std::string root_rel = "data/";
     std::string rel_path = root_rel + filename;
     NCPLUGIN_MSG("Input file: " << rel_path);
@@ -77,8 +82,7 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     if (!(stat(rel_path.c_str(), &buffer) == 0))
       NCRYSTAL_THROW2(BadInput, "The filename specified for the " << pluginNameUpperCase()
                       << " plugin is invalid or the file could not be found in the data/ directory. ");
-    Model model = Model::FILE;
-    return PhysicsModel(model, filename);
+    model = Model::FILE;
   } else if (data.at(1).at(0) == "PPF") {
     NCPLUGIN_MSG("Mode PPF selected");
     double A1, b1, A2, b2, Q0, corr;
@@ -101,9 +105,7 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     nc_assert_always(corr > 0);
 
     param.insert(param.end(), {A1, b1, A2, b2, Q0, corr});
-    Model model = Model::PPF;
-    // Parsing done! Create and return our model:
-    return PhysicsModel(model, param);
+    model = Model::PPF;
   } else if (data.at(1).at(0) == "GPF") {
     NCPLUGIN_MSG("Mode GPF selected");
     double A, s, rg, m, p, Qmin, Q1;
@@ -134,19 +136,16 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     }
     nc_assert_always(Q1 > 0);
     param.insert(param.end(), {A, s, rg, m, p, Qmin, Q1});
-    Model model = Model::GPF;
-    // Parsing done! Create and return our model:
-    return PhysicsModel(model, param);
+    model = Model::GPF;
   } else if (data.at(1).at(0) == "HSFBA") {
     NCPLUGIN_MSG("Mode HSFBA selected");
-    Model model = Model::HSFBA;
     double R;
     if (NC::safe_str2dbl(data.at(2).at(0), R)) {
       nc_assert_always(R > 0);
       param.push_back(R);
-      return PhysicsModel(model, param);
+      model = Model::HSFBA;
     } else {
-      std::string filename = data.at(2).at(0);
+      filename = data.at(2).at(0);
       std::string root_rel = "data/";
       std::string rel_path = root_rel + filename;
       NCPLUGIN_MSG("Input file: " << rel_path);
@@ -156,18 +155,70 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
         NCRYSTAL_THROW2(BadInput, "The filename specified for the " << pluginNameUpperCase()
                         << " plugin is invalid or the file could not be found in the data/ directory. ");
       }
-      // CHECK THE INPUT PARAM
-      return PhysicsModel(model, filename);
+      model = Model::HSFBA;
     }
   } else {
     NCRYSTAL_THROW2(BadInput, "Invalid model input in the @CUSTOM_" << pluginNameUpperCase()
                     << " section (see the plugin readme for more info).");
   }
+
+  double theta_min_deg = 0.0;
+  if (data.size() >= 4) {
+    const auto& thetaline = data.at(3);
+    auto equalsNoCase = [](const std::string& a, const std::string& b) {
+      return NC::upperCase(a) == NC::upperCase(b);
+    };
+    if (thetaline.size() == 1) {
+      if (!NC::safe_str2dbl(thetaline.front(), theta_min_deg))
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min_deg value in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+    } else if (thetaline.size() == 2 && equalsNoCase(thetaline.at(0), "theta_min_deg")) {
+      if (!NC::safe_str2dbl(thetaline.at(1), theta_min_deg))
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min_deg value in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+    } else if (thetaline.size() == 1 && thetaline.front().find("theta_min_deg=") != std::string::npos) {
+      auto pos = thetaline.front().find('=');
+      if (pos == std::string::npos) {
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min_deg value in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+      }
+      const std::string val = thetaline.front().substr(pos+1);
+      if (!NC::safe_str2dbl(val, theta_min_deg))
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min_deg value in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+    } else {
+      NCRYSTAL_THROW2(BadInput, "Invalid theta_min_deg specification in the @CUSTOM_" << pluginNameUpperCase()
+                      << " section (see the plugin readme for more info).");
+    }
+    if (!(theta_min_deg >= 0.0))
+      NCRYSTAL_THROW2(BadInput, "theta_min_deg must be non-negative in the @CUSTOM_" << pluginNameUpperCase()
+                      << " section.");
+  }
+
+  const double theta_min_rad = theta_min_deg * NC::kPi / 180.0;
+
+  switch (model)
+    {
+    case Model::FILE:
+      return PhysicsModel(model, filename, theta_min_rad);
+    case Model::PPF:
+    case Model::GPF:
+    case Model::HSFBA:
+      return PhysicsModel(model, param, theta_min_rad);
+    default:
+      NCRYSTAL_THROW2(LogicError, "Bad internal model state in createFromInfo for the " << pluginNameUpperCase()
+                      << " plugin");
+    }
 };
 
-NCP::PhysicsModel::PhysicsModel(Model model, std::string filename)
+NCP::PhysicsModel::PhysicsModel(Model model, std::string filename, double thetaMinRad)
   : m_model(model),
-    m_helper(([model, filename]() -> NC::IofQHelper
+    m_param(),
+    m_helper(),
+    m_qdist(),
+    m_thetaMinRad(thetaMinRad)
+{
+  auto helper_and_dist = ([model, filename]() -> std::pair<NC::IofQHelper,QIDistribution>
     {
       NC::VectD q;
       NC::VectD IofQ;
@@ -245,19 +296,24 @@ NCP::PhysicsModel::PhysicsModel(Model model, std::string filename)
                         );
           break;
         }
+      default:
+        NCRYSTAL_THROW2(LogicError,"Bad internal state in constructor for model SANSND plugin");
       }
       NC::IofQHelper helper(q,IofQ);
-      return helper;
-    })())
-{
-  // NCPLUGIN_MSG("call to constructor for 0");
-  // NCPLUGIN_MSG("helper initialized: " << m_helper.has_value());
+      return std::make_pair(std::move(helper), PhysicsModel::buildQIDistribution(q,IofQ));
+    })();
+  m_helper = std::move(helper_and_dist.first);
+  m_qdist = std::move(helper_and_dist.second);
 };
 
-NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param)
+NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param, double thetaMinRad)
   : m_model(model),
     m_param(param),
-    m_helper(([model, param]() -> NC::IofQHelper
+    m_helper(),
+    m_qdist(),
+    m_thetaMinRad(thetaMinRad)
+{
+  auto helper_and_dist = ([model, param]() -> std::pair<NC::IofQHelper,QIDistribution>
     {
       NC::VectD q;
       NC::VectD IofQ;
@@ -377,11 +433,120 @@ NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param)
         }
       //Initialize the helper
       NC::IofQHelper helper(q,IofQ);
-      return helper; })())
-{
-  // NCPLUGIN_MSG("call to constructor for 1 and 2");
-  // NCPLUGIN_MSG("helper initialized: " << m_helper.has_value());
+      return std::make_pair(std::move(helper), PhysicsModel::buildQIDistribution(q,IofQ));
+    })();
+  m_helper = std::move(helper_and_dist.first);
+  m_qdist = std::move(helper_and_dist.second);
 };
+
+NCP::PhysicsModel::QIDistribution NCP::PhysicsModel::buildQIDistribution( const NC::VectD& Q, const NC::VectD& IofQ )
+{
+  auto n = Q.size();
+  if ( !NC::nc_is_grid(Q) )
+    NCRYSTAL_THROW(BadInput,"IofQHelper got invalid Q grid");
+  if ( n != IofQ.size() )
+    NCRYSTAL_THROW(BadInput,"IofQHelper got IofQ vector of invalid length");
+  if ( ! (Q.front()>0.0) )
+    NCRYSTAL_THROW(BadInput,"IofQHelper got Q vector whose first element is not >= 0");
+
+  double emax(0.0);
+  for ( auto& e : IofQ ) {
+    if ( ! ( e>=0.0 ) )
+      NCRYSTAL_THROW(BadInput,"IofQHelper: I(Q) values must be >= 0");
+    emax = std::max<double>(e,emax);
+  }
+  if (!(emax>0.0))
+    NCRYSTAL_THROW(BadInput,"IofQHelper: I(Q) must have some values >= 0");
+
+  //Shave off excess trailing zeroes:
+  while ( n > 2 && !(NC::vectAt(IofQ,n-1)>0.0) && !(NC::vectAt(IofQ,n-2)>0.0) )
+    --n;
+
+  NC::VectD qvals;
+  NC::VectD fvals;
+  if ( Q.front() > 0 ) {
+    qvals.reserve( n + 1 );
+    fvals.reserve( n + 1 );
+    qvals.push_back( 0.0 );
+    fvals.push_back( Q.front() * IofQ.front() );
+  } else {
+    qvals.reserve( n );
+    fvals.reserve( n );
+  }
+  for( auto i : NC::ncrange( n ) ) {
+    qvals.push_back( NC::vectAt(Q,i) );
+    nc_assert( NC::vectAt(IofQ,i) >= 0.0 );
+    fvals.push_back( NC::vectAt(Q,i) * NC::vectAt(IofQ,i) );
+  }
+
+  NC::StableSum sum;
+  for ( auto i : NC::ncrange( qvals.size()-1 ) )
+    sum.add( ( NC::vectAt(qvals,i+1)-NC::vectAt(qvals,i) ) * ( NC::vectAt(fvals,i+1)+NC::vectAt(fvals,i) ) );
+
+  QIDistribution res{ NC::PointwiseDist(std::move(qvals),std::move(fvals)),
+                      0.5 * sum.sum(), 0.0 };
+  res.qmax = res.pwdist.getXVals().back();
+  return res;
+}
+
+double NCP::PhysicsModel::calcQMin(double k) const
+{
+  if ( !(m_thetaMinRad>0.0) )
+    return 0.0;
+  return 2.0 * k * std::sin(0.5*m_thetaMinRad);
+}
+
+double NCP::PhysicsModel::calcQIIntegral(double qmax) const
+{
+  if ( !m_qdist.has_value() )
+    NCRYSTAL_THROW2(LogicError, "Attempt to use not-initialized QI distribution in xs sampling in the " << pluginNameUpperCase()
+                    << " plugin");
+  if ( !(qmax>0.0) )
+    return 0.0;
+  const auto& dist = m_qdist.value();
+  const double qclamped = std::min(qmax, dist.qmax);
+  if ( !(qclamped>0.0) )
+    return 0.0;
+  if (qclamped >= dist.qmax)
+    return dist.normFact;
+  return dist.pwdist.commulIntegral(qclamped) * dist.normFact;
+}
+
+double NCP::PhysicsModel::calcQIIntegralBetween(double qmin, double qmax) const
+{
+  if ( !(qmax>0.0) )
+    return 0.0;
+  const double upper = calcQIIntegral(qmax);
+  if ( !(qmin>0.0) )
+    return upper;
+  const double lower = calcQIIntegral(qmin);
+  const double res = upper - lower;
+  return res > 0.0 ? res : 0.0;
+}
+
+double NCP::PhysicsModel::sampleQTruncated(NC::RNG &rng, double qmin, double qmax) const
+{
+  if ( !m_qdist.has_value() )
+    NCRYSTAL_THROW2(LogicError, "Attempt to use not-initialized QI distribution in Q sampling in the " << pluginNameUpperCase()
+                    << " plugin");
+  const auto& dist = m_qdist.value();
+  if ( !(qmax>0.0) )
+    return 0.0;
+  const double upper = std::min(qmax, dist.qmax);
+  if ( !(upper>0.0) )
+    return 0.0;
+  const double cdf_upper = (upper >= dist.qmax) ? 1.0 : dist.pwdist.commulIntegral(upper);
+  double lower_val = 0.0;
+  if ( qmin > 0.0 ) {
+    const double lower = std::min(qmin, dist.qmax);
+    lower_val = (lower >= dist.qmax) ? 1.0 : dist.pwdist.commulIntegral(lower);
+  }
+  if ( !(cdf_upper>lower_val) )
+    return 0.0;
+  const double u = rng.generate();
+  const double target_cdf = lower_val + u * (cdf_upper - lower_val);
+  return dist.pwdist.percentileWithIndex(target_cdf).first;
+}
 
 double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
 {
@@ -392,27 +557,31 @@ double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
   double k = NC::k2Pi / NC::ekin2wl(neutron_ekin); // wavevector
   nc_assert_always(k != 0);
   double SANS_xs;
+  const double twok = 2.0 * k;
+  const double qmin = calcQMin(k);
+  const bool useThetaCut = qmin > 0.0;
 
   switch (m_model)
     {
     case Model::PPF:
       {
-        if (m_param.has_value())
-          {
-            double A1 = m_param.value().at(0);
-            double b1 = m_param.value().at(1);
-            double A2 = m_param.value().at(2);
-            double b2 = m_param.value().at(3);
-            double Q0 = m_param.value().at(4);
-            double corr = m_param.value().at(5);
-            SANS_xs = (2 * NC::kPi / (k * k)) * (A1 / (-b1 + 2) * std::pow(Q0, -b1 + 2) + A2 / (-b2 + 2) * std::pow(2 * k, -b2 + 2) - A2 / (-b2 + 2) * std::pow(Q0, -b2 + 2));
-            SANS_xs = SANS_xs*corr; // correction added for comparison in thesis
-          }
-        else
-          {
-            NCRYSTAL_THROW2(LogicError, "Attempt to use not-initialized parameter in xs sampling in the " << pluginNameUpperCase()
-                            << " plugin");
-          }
+        if (!m_param.has_value())
+          NCRYSTAL_THROW2(LogicError, "Attempt to use not-initialized parameter in xs sampling in the " << pluginNameUpperCase()
+                          << " plugin");
+        const auto& p = m_param.value();
+        double A1 = p.at(0);
+        double b1 = p.at(1);
+        double A2 = p.at(2);
+        double b2 = p.at(3);
+        double Q0 = p.at(4);
+        double corr = p.at(5);
+        if (!useThetaCut) {
+          SANS_xs = (2 * NC::kPi / (k * k)) * (A1 / (-b1 + 2) * std::pow(Q0, -b1 + 2) + A2 / (-b2 + 2) * std::pow(2 * k, -b2 + 2) - A2 / (-b2 + 2) * std::pow(Q0, -b2 + 2));
+          SANS_xs = SANS_xs*corr; // correction added for comparison in thesis
+        } else {
+          const double integral = calcQIIntegralBetween(qmin, twok);
+          SANS_xs = 2 * NC::kPi / (k * k) * integral * corr;
+        }
         break;
       }
     case Model::FILE:
@@ -422,7 +591,12 @@ double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
         if (m_helper.has_value())
           {
             nc_assert_always(k != 0);
-            SANS_xs = 2 * NC::kPi / (k * k) * m_helper.value().calcQIofQIntegral(ekin);
+            if (!useThetaCut) {
+              SANS_xs = 2 * NC::kPi / (k * k) * m_helper.value().calcQIofQIntegral(ekin);
+            } else {
+              const double integral = calcQIIntegralBetween(qmin, twok);
+              SANS_xs = 2 * NC::kPi / (k * k) * integral;
+            }
           }
         else
           {
@@ -444,12 +618,19 @@ double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
 double NCP::PhysicsModel::sampleScatteringVector(NC::RNG &rng, double neutron_ekin) const
 {
   double Q;
+  const double k = NC::k2Pi / NC::ekin2wl(neutron_ekin); // wavevector
+  const double twok = 2.0 * k;
+  const double qmin = calcQMin(k);
+  const bool useThetaCut = qmin > 0.0;
   switch (m_model)
     {
     case Model::PPF:
       {
+        if (useThetaCut) {
+          Q = sampleQTruncated(rng, qmin, twok);
+          break;
+        }
         double rand = rng.generate();
-        double k = NC::k2Pi / NC::ekin2wl(neutron_ekin); // wavevector
         // sample a random scattering vector Q from the inverse PPF CDF (see plugin readme)
         if (m_param.has_value())
           {
@@ -487,7 +668,11 @@ double NCP::PhysicsModel::sampleScatteringVector(NC::RNG &rng, double neutron_ek
         if (m_helper.has_value())
           {
             NC::NeutronEnergy ekin(neutron_ekin);
-            Q = m_helper.value().sampleQValue(rng, ekin);
+            if (useThetaCut) {
+              Q = sampleQTruncated(rng, qmin, twok);
+            } else {
+              Q = m_helper.value().sampleQValue(rng, ekin);
+            }
           }
         else
           {

@@ -6,6 +6,7 @@
                                           //public API headers, sets up
                                           //namespaces and aliases)
 #include "NCrystal/internal/phys_utils/NCIofQHelper.hh"
+#include "NCrystal/internal/utils/NCPointwiseDist.hh"
 
 namespace NCPluginNamespace {
 
@@ -29,9 +30,9 @@ namespace NCPluginNamespace {
     static PhysicsModel createFromInfo( const NC::Info& );//will raise BadInput in case of syntax errors
     enum class Model : unsigned { FILE=0, PPF=1, GPF=2, HSFBA=3 };
     //Constructor gets the models string and vector of parameters:
-    PhysicsModel( Model model, NC::VectD param );
+    PhysicsModel( Model model, NC::VectD param, double thetaMinRad = 0.0 );
     //Constructor gets the models string and the dist R file or input I(q) file:
-    PhysicsModel( Model model, std::string filename );
+    PhysicsModel( Model model, std::string filename, double thetaMinRad = 0.0 );
 
     //Provide cross sections for a given neutron:
     double calcCrossSection( double neutron_ekin ) const;
@@ -44,10 +45,23 @@ namespace NCPluginNamespace {
     ScatEvent sampleScatteringEvent( NC::RNG& rng, double neutron_ekin ) const;
 
   private:
+    struct QIDistribution {
+      NC::PointwiseDist pwdist;
+      double normFact;
+      double qmax;
+    };
+    static QIDistribution buildQIDistribution( const NC::VectD& Q, const NC::VectD& IofQ );
+    double calcQMin(double k) const;
+    double calcQIIntegral(double qmax) const;
+    double calcQIIntegralBetween(double qmin, double qmax) const;
+    double sampleQTruncated(NC::RNG& rng, double qmin, double qmax) const;
+
     //Data members:
     Model m_model;
     NC::Optional<NC::VectD> m_param;
     NC::Optional<NC::IofQHelper> m_helper;
+    NC::Optional<QIDistribution> m_qdist;
+    double m_thetaMinRad{0.0};
   };
 
 }

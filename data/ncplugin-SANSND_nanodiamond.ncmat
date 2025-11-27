@@ -90,3 +90,4 @@ NCMAT v5
 2.0                                   # plugin version
 PPF
 132.869 1.33605 0.0519763 3.97314 0.0510821 1
+theta_min_deg 0.25

@@ -5,7 +5,7 @@
 #include "NCrystal/NCPluginBoilerplate.hh"//Common stuff (includes NCrystal
                                           //public API headers, sets up
                                           //namespaces and aliases)
-#include "NCrystal/internal/phys_utils/NCIofQHelper.hh"
+#include "NCrystal/internal/utils/NCPointwiseDist.hh"
 
 namespace NCPluginNamespace {
 
@@ -29,9 +29,9 @@ namespace NCPluginNamespace {
     static PhysicsModel createFromInfo( const NC::Info& );//will raise BadInput in case of syntax errors
     enum class Model : unsigned { FILE=0, PPF=1, GPF=2, HSFBA=3 };
     //Constructor gets the models string and vector of parameters:
-    PhysicsModel( Model model, NC::VectD param );
+    PhysicsModel( Model model, NC::VectD param, NC::Optional<double> theta_min_rad = NC::Optional<double>() );
     //Constructor gets the models string and the dist R file or input I(q) file:
-    PhysicsModel( Model model, std::string filename );
+    PhysicsModel( Model model, std::string filename, NC::Optional<double> theta_min_rad = NC::Optional<double>() );
 
     //Provide cross sections for a given neutron:
     double calcCrossSection( double neutron_ekin ) const;
@@ -47,7 +47,9 @@ namespace NCPluginNamespace {
     //Data members:
     Model m_model;
     NC::Optional<NC::VectD> m_param;
-    NC::Optional<NC::IofQHelper> m_helper;
+    NC::Optional<NC::PointwiseDist> m_dist;
+    NC::Optional<double> m_theta_min_rad;
+    double m_normFact;
   };
 
 }

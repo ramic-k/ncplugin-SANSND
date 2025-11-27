@@ -56,6 +56,17 @@ void NCP::customPluginTest()
   nc_assert_always( ! NC::createScatter("plugins::SANSND/ncplugin-SANSND_nanodiamond.ncmat"
                                         ";comp=sans").isNull() );
 
+  // Test theta_min
+  NCRYSTAL_MSG("Testing theta_min feature");
+  auto sc_no_cutoff = NC::createScatter("plugins::SANSND/ncplugin-SANSND_nanodiamond.ncmat;sans:theta_min_deg=0");
+  auto sc_with_cutoff = NC::createScatter("plugins::SANSND/ncplugin-SANSND_nanodiamond.ncmat;sans:theta_min_deg=0.25");
+  double ekin = 1e-3; // eV
+  double xs_no_cutoff = sc_no_cutoff.crossSectionIsotropic(NC::NeutronEnergy{ekin}).dbl();
+  double xs_with_cutoff = sc_with_cutoff.crossSectionIsotropic(NC::NeutronEnergy{ekin}).dbl();
+  NCRYSTAL_MSG("Cross section without cutoff: " << xs_no_cutoff);
+  NCRYSTAL_MSG("Cross section with cutoff: " << xs_with_cutoff);
+  nc_assert_always(xs_with_cutoff < xs_no_cutoff);
+
 
   NCRYSTAL_MSG("All tests of plugin "<<pluginName()<<" were successful!");
 }

@@ -62,6 +62,8 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     NCRYSTAL_THROW2(BadInput, "Invalid version specified for the " << pluginNameUpperCase()
                     << " plugin. Only the version " << supp_version << " is supported.");
   }
+  double thetaMin = 0.0;
+
   if ( data.at(1).at(0) == "FILE" ) {
     NCPLUGIN_MSG("FILE MODE selected");
     if (data.at(2).empty()) {
@@ -78,8 +80,13 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     if (!(stat(rel_path.c_str(), &buffer) == 0))
       NCRYSTAL_THROW2(BadInput, "The filename specified for the " << pluginNameUpperCase()
                       << " plugin is invalid or the file could not be found in the data/ directory. ");
+    if (data.size() >= 4 && !data.at(3).empty()) {
+      if (!NC::safe_str2dbl(data.at(3).at(0), thetaMin) || thetaMin < 0.0)
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min (radians) in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+    }
     Model model = Model::FILE;
-    return PhysicsModel(model, filename);
+    return PhysicsModel(model, filename, thetaMin);
   } else if (data.at(1).at(0) == "PPF") {
     NCPLUGIN_MSG("Mode PPF selected");
     double A1, b1, A2, b2, Q0, corr;
@@ -103,8 +110,13 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
 
     param.insert(param.end(), {A1, b1, A2, b2, Q0, corr});
     Model model = Model::PPF;
+    if (data.size() >= 4 && !data.at(3).empty()) {
+      if (!NC::safe_str2dbl(data.at(3).at(0), thetaMin) || thetaMin < 0.0)
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min (radians) in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+    }
     // Parsing done! Create and return our model:
-    return PhysicsModel(model, param);
+    return PhysicsModel(model, param, thetaMin);
   } else if (data.at(1).at(0) == "GPF") {
     NCPLUGIN_MSG("Mode GPF selected");
     double A, s, rg, m, p, Qmin, Q1;
@@ -136,22 +148,31 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
     nc_assert_always(Q1 > 0);
     param.insert(param.end(), {A, s, rg, m, p, Qmin, Q1});
     Model model = Model::GPF;
+    if (data.size() >= 4 && !data.at(3).empty()) {
+      if (!NC::safe_str2dbl(data.at(3).at(0), thetaMin) || thetaMin < 0.0)
+        NCRYSTAL_THROW2(BadInput, "Invalid theta_min (radians) in the @CUSTOM_" << pluginNameUpperCase()
+                        << " section (see the plugin readme for more info).");
+    }
     // Parsing done! Create and return our model:
-    return PhysicsModel(model, param);
+    return PhysicsModel(model, param, thetaMin);
   } else if (data.at(1).at(0) == "HSFBA") {
     NCPLUGIN_MSG("Mode HSFBA selected");
     Model model = Model::HSFBA;
-    double R, thetaMin;
-    if (NC::safe_str2dbl(data.at(2).at(0), R)
-        && NC::safe_str2dbl(data.at(3).at(0), thetaMin)) {
+    double R;
+    if (NC::safe_str2dbl(data.at(2).at(0), R)) {
       nc_assert_always(R > 0);
-      nc_assert_always(thetaMin >= 0);
-      if (thetaMin>0){
-        NCPLUGIN_WARN("Theta min is >0. Do not use this in cases where multiple scattering is not negligible, or the geometrical layout not completely certain")
+      thetaMin = 0.0;
+      if (data.size() >= 4 && !data.at(3).empty()) {
+        if (!NC::safe_str2dbl(data.at(3).at(0), thetaMin) || thetaMin < 0.0)
+          NCRYSTAL_THROW2(BadInput, "Invalid theta_min (radians) in the @CUSTOM_" << pluginNameUpperCase()
+                          << " section (see the plugin readme for more info).");
+        if (thetaMin>0){
+          NCPLUGIN_WARN("Theta min is >0. Do not use this in cases where multiple scattering is not negligible, or the geometrical layout not completely certain")
+        }
       }
       param.push_back(R);
       param.push_back(thetaMin);
-      return PhysicsModel(model, param);
+      return PhysicsModel(model, param, thetaMin);
     } else {
       std::string filename = data.at(2).at(0);
       std::string root_rel = "data/";
@@ -163,8 +184,17 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
         NCRYSTAL_THROW2(BadInput, "The filename specified for the " << pluginNameUpperCase()
                         << " plugin is invalid or the file could not be found in the data/ directory. ");
       }
+      thetaMin = 0.0;
+      if (data.size() >= 4 && !data.at(3).empty()) {
+        if (!NC::safe_str2dbl(data.at(3).at(0), thetaMin) || thetaMin < 0.0)
+          NCRYSTAL_THROW2(BadInput, "Invalid theta_min (radians) in the @CUSTOM_" << pluginNameUpperCase()
+                          << " section (see the plugin readme for more info).");
+        if (thetaMin>0){
+          NCPLUGIN_WARN("Theta min is >0. Do not use this in cases where multiple scattering is not negligible, or the geometrical layout not completely certain")
+        }
+      }
       // CHECK THE INPUT PARAM
-      return PhysicsModel(model, filename);
+      return PhysicsModel(model, filename, thetaMin);
     }
   } else {
     NCRYSTAL_THROW2(BadInput, "Invalid model input in the @CUSTOM_" << pluginNameUpperCase()
@@ -400,6 +430,7 @@ double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
   NC::NeutronEnergy ekin(neutron_ekin);
   double k = NC::k2Pi / NC::ekin2wl(neutron_ekin); // wavevector
   nc_assert_always(k != 0);
+  const double qmin = 2.0 * k * std::sin(0.5 * m_thetaMin);
   double SANS_xs;
 
   switch (m_model)
@@ -431,7 +462,7 @@ double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
         if (m_helper.has_value())
           {
             nc_assert_always(k != 0);
-            SANS_xs = 2 * NC::kPi / (k * k) * m_helper.value().calcQIofQIntegralMin(ekin);
+            SANS_xs = 2 * NC::kPi / (k * k) * m_helper.value().calcQIofQIntegralMin(ekin, qmin);
           }
         else
           {
@@ -496,7 +527,7 @@ double NCP::PhysicsModel::sampleScatteringVector(NC::RNG &rng, double neutron_ek
         if (m_helper.has_value())
           {
             NC::NeutronEnergy ekin(neutron_ekin);
-            Q = m_helper.value().sampleQValueTrunc(rng, ekin);
+            Q = m_helper.value().sampleQValueTrunc(rng, ekin, qmin);
           }
         else
           {

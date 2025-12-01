@@ -49,13 +49,13 @@ namespace NCPluginNamespace {
     //to a cross section one must still multiply it with a factor of c/E where c
     //is an appropriate constant and E is the neutron energy:
     double calcQIofQIntegral( NC::NeutronEnergy ) const;
-    //Calculate the integral of Q*I(Q) from Q=2k*sin(theta_min) to Qmax=2k
-    double calcQIofQIntegralMin( NC::NeutronEnergy ) const;
+    //Calculate the integral of Q*I(Q) from Q=2k*sin(theta_min/2) to Qmax=2k
+    double calcQIofQIntegralMin( NC::NeutronEnergy, double qmin ) const;
 
     //Sample a Q value according to Q*I(Q) over the interval from Q=0 to
     //Qmax=2k, where k is the wavenumber of the neutron of the provided energy:
     double sampleQValue( NC::RNG&, NC::NeutronEnergy ) const;
-    double sampleQValueTrunc( NC::RNG&, NC::NeutronEnergy ) const;
+    double sampleQValueTrunc( NC::RNG&, NC::NeutronEnergy, double qmin ) const;
 
     //QMax value:
     double getQMax() const;
@@ -91,9 +91,11 @@ inline double NCPluginNamespace::IofQHelper::calcQIofQIntegralMin( NC::NeutronEn
   
   constexpr double kkk = 4.0 * NC::ekin2ksq(1.0);
   const double twok = std::sqrt( kkk * ekin.dbl() );
-  double fullInt = m_pwdist.commulIntegral( twok ) * m_normFact;
-  
-  double lowerInt = m_pwdist.commulIntegral( twok*std::sin(m_thetaMin) ) * m_normFact;
+  const double fullInt = m_pwdist.commulIntegral( twok ) * m_normFact;
+  const double qmin = twok*std::sin(0.5*m_thetaMin);
+  double lowerInt = 0.0;
+  if ( qmin > 0.0 )
+    lowerInt = m_pwdist.commulIntegral( qmin ) * m_normFact;
   return fullInt - lowerInt;
 }
 
@@ -107,7 +109,8 @@ inline double NCPluginNamespace::IofQHelper::sampleQValueTrunc( NC::RNG& rng, NC
 {
   constexpr double kkk = 4.0 * NC::ekin2ksq(1.0);
   const double twok = std::sqrt( kkk * std::min<double>(m_ekinMax.dbl(),ekin.dbl()) );
-  return m_pwdist.sampleBelowTrunc( rng, twok, twok*std::sin(m_thetaMin) );
+  const double qmin = twok*std::sin(0.5*m_thetaMin);
+  return m_pwdist.sampleBelowTrunc( rng, twok, qmin );
 }
 
 #endif

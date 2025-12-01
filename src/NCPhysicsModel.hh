@@ -40,6 +40,7 @@ namespace NCPluginNamespace {
     Model m_model;
     NC::Optional<NC::VectD> m_param;
     NC::Optional<NCP::IofQHelper> m_helper;
+    double m_thetaMin{0.0};
   };
 
 }

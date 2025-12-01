@@ -202,9 +202,13 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
   }
 };
 
-NCP::PhysicsModel::PhysicsModel(Model model, std::string filename)
+NCP::PhysicsModel::PhysicsModel(Model model, std::string filename, double thetaMin)
   : m_model(model),
-    m_helper(([model, filename]() -> NCP::IofQHelper
+    m_param(),
+    m_helper(),
+    m_thetaMin(thetaMin)
+{
+  m_helper = ([model, filename, thetaMin]() -> NCP::IofQHelper
     {
       NC::VectD q;
       NC::VectD IofQ;
@@ -282,23 +286,27 @@ NCP::PhysicsModel::PhysicsModel(Model model, std::string filename)
                         );
           break;
         }
+      default:
+        NCRYSTAL_THROW2(LogicError,"Bad internal state in constructor for model SANSND plugin");
       }
-      NCP::IofQHelper helper(q,IofQ);
+      NCP::IofQHelper helper(q,IofQ,thetaMin);
       return helper;
-    })())
-{
+    })();
   // NCPLUGIN_MSG("call to constructor for 0");
   // NCPLUGIN_MSG("helper initialized: " << m_helper.has_value());
 };
 
-NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param)
+NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param, double thetaMinRad)
   : m_model(model),
     m_param(param),
-    m_helper(([model, param]() -> NCP::IofQHelper
+    m_helper(),
+    m_thetaMin(thetaMinRad)
+{
+  m_helper = ([model, param, thetaMinRad]() -> NCP::IofQHelper
     {
       NC::VectD q;
       NC::VectD IofQ;
-      double thetaMin = 0;
+      const double thetaMin = thetaMinRad;
       switch(model)
         {
         case Model::GPF:
@@ -384,9 +392,8 @@ NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param)
           }
         case Model::HSFBA:
           {
-            nc_assert_always(param.size()==2);
+            nc_assert_always(param.size()>=1);
             double mono_R = param.at(0);
-            thetaMin = param.at(1);
             double q_min = std::log10(1e-6);
             int sampling =  std::abs(1-q_min)*10000;
             q = NC::logspace(q_min,1,sampling);
@@ -411,13 +418,12 @@ NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param)
             break;
           }
         default:
-          NCRYSTAL_THROW2(LogicError,"Bad internal state in costructor for model SANSND plugin");
+          NCRYSTAL_THROW2(LogicError,"Bad internal state in constructor for model SANSND plugin");
 
         }
       //Initialize the helper
       NCP::IofQHelper helper(q,IofQ,thetaMin);
-      return helper; })())
-{
+      return helper; })();
   // NCPLUGIN_MSG("call to constructor for 1 and 2");
   // NCPLUGIN_MSG("helper initialized: " << m_helper.has_value());
 };

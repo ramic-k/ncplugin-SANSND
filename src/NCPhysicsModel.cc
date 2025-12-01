@@ -490,12 +490,13 @@ double NCP::PhysicsModel::calcCrossSection(double neutron_ekin) const
 double NCP::PhysicsModel::sampleScatteringVector(NC::RNG &rng, double neutron_ekin) const
 {
   double Q;
+  const double k = NC::k2Pi / NC::ekin2wl(neutron_ekin); // wavevector
+  const double qmin = 2.0 * k * std::sin(0.5 * m_thetaMin);
   switch (m_model)
     {
     case Model::PPF:
       {
         double rand = rng.generate();
-        double k = NC::k2Pi / NC::ekin2wl(neutron_ekin); // wavevector
         // sample a random scattering vector Q from the inverse PPF CDF (see plugin readme)
         if (m_param.has_value())
           {

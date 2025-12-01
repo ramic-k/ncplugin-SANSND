@@ -21,6 +21,7 @@
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "NCrystal/NCPluginBoilerplate.hh"
 #include "NCrystal/core/NCTypes.hh"
 #include "NCPointwiseDist.hh"
 

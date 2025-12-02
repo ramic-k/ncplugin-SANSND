@@ -316,7 +316,7 @@ NCP::PhysicsModel::PhysicsModel(const NC::Info& info, Model model, NC::VectD par
   const double number_density = info.getNumberDensity().dbl();//atoms/Aa^3
   double avg_coh_scatlen_sqrtbarn = 0.0;//sqrt(barn)=10fm=1e-4 Aa
   for ( const auto& ce : info.getComposition() )
-    avg_coh_scatlen_sqrtbarn += ce.fraction * ce.atom.atomData().coherentScatLen();
+    avg_coh_scatlen_sqrtbarn += ce.fraction * ce.atom.data().coherentScatLen();
   const double coh_scatlen_angstrom = avg_coh_scatlen_sqrtbarn * 1e-4;
 
   auto helper_and_dist = ([model, param, number_density, coh_scatlen_angstrom]() -> std::pair<NC::IofQHelper,QIDistribution>

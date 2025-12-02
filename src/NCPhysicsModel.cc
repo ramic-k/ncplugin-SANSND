@@ -200,18 +200,18 @@ NCP::PhysicsModel NCP::PhysicsModel::createFromInfo(const NC::Info &info)
   switch (model)
     {
     case Model::FILE:
-      return PhysicsModel(model, filename, theta_min_rad);
+      return PhysicsModel(info, model, filename, theta_min_rad);
     case Model::PPF:
     case Model::GPF:
     case Model::HSFBA:
-      return PhysicsModel(model, param, theta_min_rad);
+      return PhysicsModel(info, model, param, theta_min_rad);
     default:
       NCRYSTAL_THROW2(LogicError, "Bad internal model state in createFromInfo for the " << pluginNameUpperCase()
                       << " plugin");
     }
 };
 
-NCP::PhysicsModel::PhysicsModel(Model model, std::string filename, double thetaMinRad)
+NCP::PhysicsModel::PhysicsModel(const NC::Info& info, Model model, std::string filename, double thetaMinRad)
   : m_model(model),
     m_param(),
     m_helper(),
@@ -306,14 +306,20 @@ NCP::PhysicsModel::PhysicsModel(Model model, std::string filename, double thetaM
   m_qdist = std::move(helper_and_dist.second);
 };
 
-NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param, double thetaMinRad)
+NCP::PhysicsModel::PhysicsModel(const NC::Info& info, Model model, NC::VectD param, double thetaMinRad)
   : m_model(model),
     m_param(param),
     m_helper(),
     m_qdist(),
     m_thetaMinRad(thetaMinRad)
 {
-  auto helper_and_dist = ([model, param]() -> std::pair<NC::IofQHelper,QIDistribution>
+  const double number_density = info.getNumberDensity().dbl();//atoms/Aa^3
+  double avg_coh_scatlen_sqrtbarn = 0.0;//sqrt(barn)=10fm=1e-4 Aa
+  for ( const auto& ce : info.getComposition() )
+    avg_coh_scatlen_sqrtbarn += ce.fraction * ce.atom.atomData().coherentScatLen();
+  const double coh_scatlen_angstrom = avg_coh_scatlen_sqrtbarn * 1e-4;
+
+  auto helper_and_dist = ([model, param, number_density, coh_scatlen_angstrom]() -> std::pair<NC::IofQHelper,QIDistribution>
     {
       NC::VectD q;
       NC::VectD IofQ;
@@ -408,9 +414,8 @@ NCP::PhysicsModel::PhysicsModel(Model model, NC::VectD param, double thetaMinRad
             int sampling =  std::abs(1-q_min)*10000;
             q = NC::logspace(q_min,1,sampling);
             IofQ = q;
-            double b = 6.646E-05;  // [AA] Carbon coherent scattering length
-            double n = 0.1771471666666667; // [at/AA^3] <- Diamond atom density
-            double physical_constant = 16*NC::kPi*NC::kPi*std::pow(n*b, 2);  // [1/AA^4]
+            // physical_constant = 16*pi^2*(n*b)^2 with b in Aa and n in 1/Aa^3
+            double physical_constant = 16*NC::kPi*NC::kPi*std::pow(number_density*coh_scatlen_angstrom, 2);  // [1/AA^4]
             std::for_each(IofQ.begin(),IofQ.end(),
                           [mono_R,physical_constant](double &x) {
                             double R, osc_term, Nc;
